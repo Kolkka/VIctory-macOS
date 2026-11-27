@@ -239,7 +239,16 @@ pub(crate) fn lower_pruned(
     {
         return original;
     }
+    lower_literal(parts, keep, per_vertex_center)
+}
 
+/// The whole-wave translation of a 64-thread wave64 compute program on a
+/// 32-lane host, tried when the per-lane halves translation refuses it.
+pub(crate) fn lower_literal(
+    parts: &Parts,
+    keep: Option<&KeptOutputs>,
+    per_vertex_center: bool,
+) -> Result<Lowered, ShaderError> {
     let native = parts.native;
     // Register-relative move bounds and resource paths must use the same
     // control flow as lowering. The per-lane move bounds do not apply here.

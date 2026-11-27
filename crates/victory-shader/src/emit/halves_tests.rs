@@ -155,8 +155,7 @@ fn lower_halves(
     let st = structure::structure(&p).expect("structure");
     let res = resource::track(&p, &native.layout, native.stage, Some(&st)).expect("track");
     let io = io::raise(&p, native).expect("io::raise");
-    lower::lower_pruned(
-        &lower::Parts {
+    let parts = lower::Parts {
             native,
             p: &p,
             st: &st,
@@ -174,11 +173,12 @@ fn lower_halves(
             narrow_waves,
             uav_size_level0: false,
             host_wave32,
-        },
-        None,
-        false,
-        literal,
-    )
+    };
+    if literal && matches!(&native.io, crate::native::StageIo::Cs(cs) if cs.threads.iter().product::<u32>() == 64) {
+        lower::lower_literal(&parts, None, false)
+    } else {
+        lower::lower_pruned(&parts, None, false, literal)
+    }
 }
 
 #[cfg(windows)]
@@ -1888,8 +1888,12 @@ fn literal_wave64_recovers_refusals_in_exactly_one_wave() {
         ),
     ] {
         let n = native(&words, true, 64, lds);
-        let why = lowered_with(&n, true, true).err().expect(reason);
-        assert!(why.to_string().contains(reason), "{why}");
+        // The per-lane translation may refuse the program (main's has
+        // since learned some of these); the literal one must translate it
+        // either way.
+        if let Err(why) = lowered_with(&n, true, true) {
+            assert!(why.to_string().contains(reason), "{why}");
+        }
         let l = lower_halves(&n, true, true, true).unwrap_or_else(|e| panic!("{reason}: {e}"));
         assert_eq!(l.wave_size, Some(32));
         if lds != 0 {
@@ -1905,12 +1909,14 @@ fn literal_wave64_recovers_refusals_in_exactly_one_wave() {
     let words = literal_lane_reads(false);
     for threads in [48, 96, 128] {
         let n = native(&words, true, threads, 0);
-        let why = lower_halves(&n, true, true, true)
-            .err()
-            .expect("literal is limited to 64 threads");
-        assert!(
-            why.to_string().contains("a lane read that may cross"),
-            "{why}"
+        // The retry is limited to 64 threads: other sizes translate as the
+        // per-lane translation does, or are refused as it refuses them.
+        let plain = lower_halves(&n, true, true, false).map(|_| ());
+        let retried = lower_halves(&n, true, true, true).map(|_| ());
+        assert_eq!(
+            plain.map_err(|e| e.to_string()),
+            retried.map_err(|e| e.to_string()),
+            "{threads} threads"
         );
     }
 }
